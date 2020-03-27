@@ -38,7 +38,7 @@ public class ShopsApi {
     }
 
     public void createShop(String name, Player owner, World world) throws SQLException {
-        PreparedStatement statement = plugin.db().prepareStatement("INSERT INTO shops(name, owner, world) VALUES(?, ?, ?)");
+        PreparedStatement statement = plugin.db().prepareStatement("INSERT INTO shops(name, owner, world) VALUES(?, ?, ?, ?)");
         statement.setString(1, name);
         statement.setString(2, owner.getUniqueId().toString());
         statement.setString(3, world.getUID().toString());

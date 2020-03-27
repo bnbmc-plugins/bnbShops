@@ -19,6 +19,8 @@ import org.bukkit.event.player.PlayerEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import tech.cheating.chaireco.IEconomy;
+import tech.cheating.chaireco.exceptions.EconomyBalanceTooLowException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -128,9 +130,9 @@ public class Events implements Listener {
         int amount;
         try {
             if (value.startsWith("$")) {
-                amount = (int) (Float.parseFloat(value.substring(1, value.length())) * 100);
+                amount = IEconomy.getCentValue(value.substring(1));
             } else {
-                amount = (int) (Float.parseFloat(value) * 100);
+                amount = IEconomy.getCentValue(value);
             }
 
             if (amount < 0) {
@@ -149,9 +151,9 @@ public class Events implements Listener {
 
         plugin.api().addSignToShop(store, sign, signType, items.item, amount);
         if (signType == ShopsApi.SignType.SIGN_TYPE_BUY) {
-            player.sendMessage(ChatColor.GREEN + "You've put " + items.item.getAmount() + " " + items.item.getType().toString() + " on sale for " + amount + "!");
+            player.sendMessage(ChatColor.GREEN + "You've put " + items.item.getAmount() + " " + items.item.getType().toString() + " on sale for " + IEconomy.getDollarValue(amount) + "!");
         } else {
-            player.sendMessage(ChatColor.GREEN + "You're buying " + items.item.getAmount() + " " + items.item.getType().toString() + " for " + amount + "!");
+            player.sendMessage(ChatColor.GREEN + "You're buying " + items.item.getAmount() + " " + items.item.getType().toString() + " for " + IEconomy.getDollarValue(amount) + "!");
         }
 
         plugin.playerState().clearUserState(player);
@@ -161,7 +163,7 @@ public class Events implements Listener {
         } else {
             sign.setLine(0, ChatColor.DARK_BLUE + "[Sell]");
         }
-        sign.setLine(3, "$" + amount);
+        sign.setLine(3, IEconomy.getDollarValue(amount));
         sign.update();
         e.setCancelled(true);
     }
@@ -205,8 +207,17 @@ public class Events implements Listener {
     private void performSale(Player target, int shopId, ItemStack items, int price) throws SQLException {
         Chest[] chests = plugin.api().chestsForShop(shopId);
         String shopName = plugin.api().getShopName(shopId);
+        String shopOwner = plugin.api().getShopOwner(shopId);
 
         int initialAmount = items.getAmount();
+
+        if (price > 0) {
+            int balance = plugin.economy().getBalance(target);
+            if (balance < price) {
+                target.sendMessage(ChatColor.RED + "You don't have enough money to buy this item.");
+                return;
+            }
+        }
 
         //Make sure the player has enough inventory space
         HashMap<Integer, ItemStack> result = target.getInventory().addItem(items);
@@ -233,13 +244,16 @@ public class Events implements Listener {
             return;
         }
 
-        //TODO: economy stuff
         //Don't bother with a transfer if the item is priced at $0
         if (price > 0) {
-
+            try {
+                plugin.economy().transfer(target.getUniqueId().toString(), target.getName(), shopOwner, shopName, price, "Purchase of " + initialAmount + " " + items.getType().toString());
+            } catch (EconomyBalanceTooLowException e) {
+                e.printStackTrace();
+            }
         }
 
-        target.sendMessage(ChatColor.GREEN + "You've purchased " + initialAmount + " " + items.getType().toString() + " from " + shopName + " for " + price + "!");
+        target.sendMessage(ChatColor.GREEN + "You've purchased " + initialAmount + " " + items.getType().toString() + " from " + shopName + " for " + IEconomy.getDollarValue(price) + "!");
     }
 
     private void performRefund(Player target, int shopId, ItemStack items, int price) throws SQLException {
@@ -251,6 +265,16 @@ public class Events implements Listener {
 
         Chest[] chests = plugin.api().chestsForShop(shopId);
         String shopName = plugin.api().getShopName(shopId);
+        String shopOwner = plugin.api().getShopOwner(shopId);
+
+        if (price > 0) {
+            int balance = plugin.economy().getBalance(target);
+            if (balance < price) {
+                target.sendMessage(ChatColor.RED + shopName + "doesn't have enough money to buy this item from you.");
+                return;
+            }
+        }
+
         int initialAmount = items.getAmount();
         int remaining = addToChests(chests, items);
 
@@ -263,14 +287,17 @@ public class Events implements Listener {
             return;
         }
 
-        //TODO: economy stuff
         //Don't bother with a transfer if the item is priced at $0
         if (price > 0) {
-
+            try {
+                plugin.economy().transfer(shopOwner, shopName, target.getUniqueId().toString(), target.getName(), price, "Refund for " + initialAmount + " " + items.getType().toString());
+            } catch (EconomyBalanceTooLowException e) {
+                e.printStackTrace();
+            }
         }
 
         target.getInventory().remove(items);
-        target.sendMessage(ChatColor.GREEN + "You've sold " + initialAmount + " " + items.getType().toString() + " to " + shopName + " for " + price + "!");
+        target.sendMessage(ChatColor.GREEN + "You've sold " + initialAmount + " " + items.getType().toString() + " to " + shopName + " for " + IEconomy.getDollarValue(price) + "!");
     }
 
     private int addToChests(Chest[] chests, ItemStack items) {

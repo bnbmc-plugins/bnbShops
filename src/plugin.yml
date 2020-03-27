@@ -3,6 +3,8 @@ version: "1.0"
 api-version: "1.13"
 author: vicr123
 main: com.vicr123.bnbshops.BnbShops
+depend:
+  - ChairEco
 
 commands:
   shop:

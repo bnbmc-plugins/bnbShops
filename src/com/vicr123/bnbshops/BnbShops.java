@@ -6,6 +6,7 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
+import tech.cheating.chaireco.IEconomy;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -16,6 +17,7 @@ public class BnbShops extends JavaPlugin {
     Connection connection;
     PlayerState state;
     ShopsApi api;
+    IEconomy economy;
 
     @Override
     public void onDisable() {
@@ -31,6 +33,7 @@ public class BnbShops extends JavaPlugin {
         lwc = new LWCManager();
         state = new PlayerState();
         api = new ShopsApi(this);
+        economy = this.getServer().getServicesManager().getRegistration(IEconomy.class).getProvider();
         prepareDatabase();
 
         Bukkit.getServer().getPluginManager().registerEvents(new Events(this), this);
@@ -51,6 +54,10 @@ public class BnbShops extends JavaPlugin {
 
     public ShopsApi api() {
         return this.api;
+    }
+
+    public IEconomy economy() {
+        return this.economy;
     }
 
     private void prepareDatabase() {
