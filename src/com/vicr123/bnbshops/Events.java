@@ -8,12 +8,14 @@ import org.bukkit.block.Chest;
 import org.bukkit.block.DoubleChest;
 import org.bukkit.block.Sign;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.player.PlayerEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -23,6 +25,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 
 public class Events implements Listener {
     BnbShops plugin;
@@ -35,14 +38,15 @@ public class Events implements Listener {
         try {
             if (e.getAction() == Action.LEFT_CLICK_BLOCK) {
                 Block b = e.getClickedBlock();
-                if (b.getType() == Material.CHEST) {
-                    onChestClick(b, e.getPlayer());
-                    e.setCancelled(true);
-                } else if (Arrays.asList(Material.ACACIA_SIGN, Material.ACACIA_WALL_SIGN, Material.BIRCH_SIGN, Material.BIRCH_WALL_SIGN,
-                        Material.DARK_OAK_SIGN, Material.DARK_OAK_WALL_SIGN, Material.JUNGLE_SIGN, Material.JUNGLE_WALL_SIGN,
-                        Material.OAK_SIGN, Material.OAK_WALL_SIGN, Material.SPRUCE_SIGN, Material.SPRUCE_WALL_SIGN).contains(b.getType())) {
-                    onSignClick(b, e.getPlayer());
-                    e.setCancelled(true);
+                if (b.getState() instanceof Chest) {
+                    onChestClick(b, e.getPlayer(), e);
+                } else if (b.getState() instanceof Sign) {
+                    onSignClick(b, e.getPlayer(), e);
+                }
+            } else if (e.getAction() == Action.RIGHT_CLICK_BLOCK) {
+                Block b = e.getClickedBlock();
+                if (b.getState() instanceof Sign) {
+                    onSignRightClick(b, e.getPlayer(), e);
                 }
             }
         } catch (SQLException exception) {
@@ -51,19 +55,31 @@ public class Events implements Listener {
         }
     }
 
-    private void onChestClick(Block b, Player player) throws SQLException {
+    private void onChestClick(Block b, Player player, Cancellable e) throws SQLException {
         if (plugin.playerState().playerState(player) != PlayerState.State.PLAYER_STATE_CHEST) return;
+        e.setCancelled(true);
 
         Chest chest = (Chest) b.getState();
+
         int store = plugin.api().getDefaultShop(player);
         boolean added;
-        if (chest.getInventory().getHolder() instanceof DoubleChest) {
-            DoubleChest dc = (DoubleChest) chest.getInventory().getHolder();
 
-            added = plugin.api().toggleChestInShop(store, (Chest) dc.getLeftSide());
-            plugin.api().toggleChestInShop(store, (Chest) dc.getRightSide());
-        } else {
-            added = plugin.api().toggleChestInShop(store, chest);
+        try {
+            if (chest.getInventory().getHolder() instanceof DoubleChest) {
+                DoubleChest dc = (DoubleChest) chest.getInventory().getHolder();
+
+                added = plugin.api().toggleChestInShop(store, (Chest) dc.getLeftSide());
+                plugin.api().toggleChestInShop(store, (Chest) dc.getRightSide());
+            } else {
+                added = plugin.api().toggleChestInShop(store, chest);
+            }
+        } catch (SQLException exception) {
+            if (exception.getErrorCode() == 19) { //SQLITE_CONSTRAINT
+                player.sendMessage(ChatColor.RED + "That chest is already linked to another shop.");
+                return;
+            } else {
+                throw exception;
+            }
         }
 
         if (added) {
@@ -71,53 +87,212 @@ public class Events implements Listener {
         } else {
             player.sendMessage(ChatColor.GREEN + "We've removed that chest from your shop");
         }
+
     }
 
-    private void onSignClick(Block b, Player player) throws SQLException {
-        if (plugin.playerState().playerState(player) != PlayerState.State.PLAYER_STATE_SIGN) return;
+    private void onSignClick(Block b, Player player, Cancellable e) throws SQLException {
+        switch (plugin.playerState().playerState(player)) {
+            case PLAYER_STATE_SIGN:
+                performAddSign(b, player, e);
+                break;
+            case PLAYER_STATE_REMOVE_SIGN:
+                performRemoveSign(b, player, e);
+        }
+    }
+
+    private void performAddSign(Block b, Player player, Cancellable e) throws SQLException {
+        int store = plugin.api().getDefaultShop(player);
 
         Sign sign = ((Sign) b.getState());
-        Integer shop = plugin.api().shopForSign(sign);
+        Integer existingSignOwner = plugin.api().shopForSign(sign);
+        if (existingSignOwner != null && existingSignOwner != store) {
+            player.sendMessage(ChatColor.RED + "That sign is already linked to another shop.");
+            return;
+        }
 
-        int store = plugin.api().getDefaultShop(player);
         ShopsApi.SignType signType;
-        if (sign.getLine(0).equals("[Buy]")) {
+        String signTypeLine = sign.getLine(0);
+        if (signTypeLine.startsWith(ChatColor.DARK_BLUE.toString())) signTypeLine = signTypeLine.substring(ChatColor.DARK_BLUE.toString().length(), signTypeLine.length());
+        if (signTypeLine.equals("[Buy]")) {
             signType = ShopsApi.SignType.SIGN_TYPE_BUY;
-        } else if (sign.getLine(0).equals("[Sell]")) {
+        } else if (signTypeLine.equals("[Sell]")) {
             signType = ShopsApi.SignType.SIGN_TYPE_SELL;
         } else {
             player.sendMessage(ChatColor.RED + "That sign isn't correctly formatted.");
             player.sendMessage(ChatColor.RED + "Write [Buy] or [Sell] on the first line.");
+            e.setCancelled(true);
             return;
         }
 
         String value = sign.getLine(3);
-        float amount;
+        int amount;
         try {
             if (value.startsWith("$")) {
-                amount = Float.parseFloat(value.substring(1, value.length()));
+                amount = (int) (Float.parseFloat(value.substring(1, value.length())) * 100);
             } else {
-                amount = Float.parseFloat(value);
+                amount = (int) (Float.parseFloat(value) * 100);
             }
-        } catch (NumberFormatException e) {
+
+            if (amount < 0) {
+                player.sendMessage(ChatColor.RED + "You can't buy/sell for a negative amount of money.");
+                e.setCancelled(true);
+                return;
+            }
+        } catch (NumberFormatException exception) {
             player.sendMessage(ChatColor.RED + "That sign isn't correctly formatted.");
-            player.sendMessage(ChatColor.RED + "Write the amount to sell these items for on the fourth line.");
+            player.sendMessage(ChatColor.RED + "Write the amount to sell/buy these items for on the fourth line.");
+            e.setCancelled(true);
             return;
         }
 
         PlayerState.SignMetadata items = plugin.playerState().getSignModifyState(player);
 
         plugin.api().addSignToShop(store, sign, signType, items.item, amount);
-        player.sendMessage(ChatColor.GREEN + "You've put " + items.item.getAmount() + " " + items.item.getType().toString() + " on sale for " + amount + "!");
+        if (signType == ShopsApi.SignType.SIGN_TYPE_BUY) {
+            player.sendMessage(ChatColor.GREEN + "You've put " + items.item.getAmount() + " " + items.item.getType().toString() + " on sale for " + amount + "!");
+        } else {
+            player.sendMessage(ChatColor.GREEN + "You're buying " + items.item.getAmount() + " " + items.item.getType().toString() + " for " + amount + "!");
+        }
 
         plugin.playerState().clearUserState(player);
 
         if (signType == ShopsApi.SignType.SIGN_TYPE_BUY) {
-            sign.setLine(0, ChatColor.BLUE + "[Buy]");
+            sign.setLine(0, ChatColor.DARK_BLUE + "[Buy]");
         } else {
-            sign.setLine(0, ChatColor.BLUE + "[Sell]");
+            sign.setLine(0, ChatColor.DARK_BLUE + "[Sell]");
         }
         sign.setLine(3, "$" + amount);
+        sign.update();
+        e.setCancelled(true);
+    }
+
+    private void performRemoveSign(Block b, Player player, Cancellable e) throws SQLException {
+        e.setCancelled(true);
+
+        int store = plugin.api().getDefaultShop(player);
+
+        Sign sign = ((Sign) b.getState());
+        Integer existingSignOwner = plugin.api().shopForSign(sign);
+        if (existingSignOwner == null || existingSignOwner != store) {
+            player.sendMessage(ChatColor.RED + "That sign is not linked to " + plugin.api().getShopName(store));
+            return;
+        }
+
+        plugin.api().removeSignFromShop(sign);
+        player.sendMessage(ChatColor.GREEN + "That sign was removed from " + plugin.api().getShopName(store));
+        plugin.playerState().clearUserState(player);
+    }
+
+    private void onSignRightClick(Block b, Player player, Cancellable e) throws SQLException {
+        Sign sign = ((Sign) b.getState());
+
+        Integer shop = plugin.api().shopForSign(sign);
+        if (shop == null) return; //This sign does not belong to a shop
+
+        e.setCancelled(true);
+
+        ItemStack items = plugin.api().itemsForSign(sign);
+        ShopsApi.SignType type = plugin.api().typeForSign(sign);
+        int price = plugin.api().priceForSign(sign);
+
+        if (type == ShopsApi.SignType.SIGN_TYPE_SELL) {
+            performRefund(player, shop, items, price);
+        } else {
+            performSale(player, shop, items, price);
+        }
+    }
+
+    private void performSale(Player target, int shopId, ItemStack items, int price) throws SQLException {
+        Chest[] chests = plugin.api().chestsForShop(shopId);
+        String shopName = plugin.api().getShopName(shopId);
+
+        int initialAmount = items.getAmount();
+
+        //Make sure the player has enough inventory space
+        HashMap<Integer, ItemStack> result = target.getInventory().addItem(items);
+        if (result.size() != 0) {
+            //Roll back the player
+            items.setAmount(initialAmount - result.get(0).getAmount());
+            target.getInventory().removeItem(items);
+
+            target.sendMessage(ChatColor.RED + "You don't have enough inventory space to buy this item.");
+            return;
+        }
+
+        int remaining = removeFromChests(chests, items);
+        if (remaining != 0) { //No stock left
+            //Roll back the chests
+            items.setAmount(initialAmount - remaining);
+            addToChests(chests, items);
+
+            //Roll back the player
+            items.setAmount(initialAmount);
+            target.getInventory().removeItem(items);
+
+            target.sendMessage(ChatColor.RED + shopName + " is out of stock.");
+            return;
+        }
+
+        //TODO: economy stuff
+        //Don't bother with a transfer if the item is priced at $0
+        if (price > 0) {
+
+        }
+
+        target.sendMessage(ChatColor.GREEN + "You've purchased " + initialAmount + " " + items.getType().toString() + " from " + shopName + " for " + price + "!");
+    }
+
+    private void performRefund(Player target, int shopId, ItemStack items, int price) throws SQLException {
+        //Make sure the player has enough inventory
+        if (!target.getInventory().containsAtLeast(items, items.getAmount())) {
+            target.sendMessage(ChatColor.RED + "You don't have enough items to sell.");
+            return;
+        }
+
+        Chest[] chests = plugin.api().chestsForShop(shopId);
+        String shopName = plugin.api().getShopName(shopId);
+        int initialAmount = items.getAmount();
+        int remaining = addToChests(chests, items);
+
+        if (remaining != 0) { //No space left in the chests
+            //Roll back the chests
+            items.setAmount(initialAmount - remaining);
+            removeFromChests(chests, items);
+
+            target.sendMessage(ChatColor.RED + shopName + " doesn't have enough space for your items.");
+            return;
+        }
+
+        //TODO: economy stuff
+        //Don't bother with a transfer if the item is priced at $0
+        if (price > 0) {
+
+        }
+
+        target.getInventory().remove(items);
+        target.sendMessage(ChatColor.GREEN + "You've sold " + initialAmount + " " + items.getType().toString() + " to " + shopName + " for " + price + "!");
+    }
+
+    private int addToChests(Chest[] chests, ItemStack items) {
+        for (Chest chest : chests) {
+            HashMap<Integer, ItemStack> result = chest.getInventory().addItem(items);
+            if (result.size() == 0) { //We're done!
+                return 0;
+            }
+            items.setAmount(result.get(0).getAmount());
+        }
+        return items.getAmount();
+    }
+
+    private int removeFromChests(Chest[] chests, ItemStack items) {
+        for (Chest chest : chests) {
+            HashMap<Integer, ItemStack> result = chest.getInventory().removeItem(items);
+            if (result.size() == 0) { //We're done!
+                return 0;
+            }
+            items.setAmount(result.get(0).getAmount());
+        }
+        return items.getAmount();
     }
 
     @EventHandler

@@ -19,7 +19,11 @@ public class BnbShops extends JavaPlugin {
 
     @Override
     public void onDisable() {
-
+        try {
+            connection.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
@@ -61,7 +65,7 @@ public class BnbShops extends JavaPlugin {
                                                              "PRIMARY KEY (shopId, x, y, z)," +
                                                              "FOREIGN KEY (shopId) REFERENCES shops(id) ON DELETE CASCADE," +
                                                              "UNIQUE(x, y, z))");
-            this.connection.createStatement().execute("CREATE TABLE IF NOT EXISTS signs(shopId INTEGER, x INTEGER, y INTEGER, z INTEGER, type INTEGER, item TEXT, amount FLOAT," +
+            this.connection.createStatement().execute("CREATE TABLE IF NOT EXISTS signs(shopId INTEGER, x INTEGER, y INTEGER, z INTEGER, type INTEGER, item TEXT, amount INTEGER," +
                                                              "PRIMARY KEY (shopId, x, y, z)," +
                                                              "FOREIGN KEY (shopId) REFERENCES shops(id) ON DELETE CASCADE," +
                                                              "UNIQUE(x, y, z))");

@@ -9,7 +9,8 @@ public class PlayerState {
     public enum State {
         PLAYER_STATE_IDLE,
         PLAYER_STATE_CHEST,
-        PLAYER_STATE_SIGN
+        PLAYER_STATE_SIGN,
+        PLAYER_STATE_REMOVE_SIGN
     }
 
     public static class SignMetadata {
